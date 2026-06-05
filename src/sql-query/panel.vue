@@ -4,6 +4,9 @@ import debounce from 'lodash.debounce';
 import { computed, nextTick, ref, toRefs, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import FastTable from './FastTable.vue';
+import PieChartDisplay from './PieChartDisplay.vue';
+import SingleValueDisplay from './SingleValueDisplay.vue';
+import type { ValueFormat, ValueLayout, ValueSize } from './displayUtils';
 
 const router = useRouter();
 
@@ -12,6 +15,16 @@ const props = withDefaults(defineProps<{
   showHeader: boolean;
   sql: string;
   cache: number;
+  display_mode: 'table' | 'single_value' | 'pie_chart';
+  value_layout?: ValueLayout;
+  value_column?: string;
+  value_label_column?: string;
+  value_size?: ValueSize;
+  value_format?: ValueFormat;
+  pie_value_column?: string;
+  pie_label_column?: string;
+  pie_show_legend?: boolean;
+  pie_show_values?: boolean;
   columns: Array<{
     text: string;
     value: string;
@@ -36,10 +49,19 @@ const props = withDefaults(defineProps<{
     }>
   }>
 }>(), {
+  display_mode: 'table',
   download: true,
+  value_layout: 'single',
+  value_column: 'value',
+  value_size: 'lg',
+  value_format: 'auto',
+  pie_show_legend: true,
+  pie_show_values: true,
 });
 
-const { id, showHeader, download, is_static } = toRefs(props);
+const { id, showHeader, download, is_static, display_mode, allow_refresh } = toRefs(props);
+
+const isTableMode = computed(() => display_mode.value === 'table');
 
 const loading = ref(false);
 const error = ref('');
@@ -114,13 +136,13 @@ const sort = ref({ by: null, desc: false });
 watch(
   sort,
   ({ by, desc }) => {
-    if (by && items.value) {
-      items.value = items.value.sort((a, b) => {
-        if (a[by] < b[by]) return desc ? 1 : -1;
-        if (a[by] > b[by]) return desc ? -1 : 1;
-        return 0;
-      });
-    }
+    if (!isTableMode.value || !by || !items.value) return;
+
+    items.value = items.value.sort((a, b) => {
+      if (a[by] < b[by]) return desc ? 1 : -1;
+      if (a[by] > b[by]) return desc ? -1 : 1;
+      return 0;
+    });
   },
   { deep: true }
 );
@@ -197,13 +219,27 @@ async function fetchData(noCache = false) {
         };
       });
 
-      const numberCols = props.columns && props.columns.filter(c => c.isNumber);
-      if (numberCols) {
+      const numberColNames = new Set<string>();
+      props.columns?.filter(c => c.isNumber).forEach(c => numberColNames.add(c.value));
+
+      if (
+        props.display_mode === 'single_value'
+        && props.value_column
+        && (props.value_format === 'number' || props.value_format === 'percent')
+      ) {
+        numberColNames.add(props.value_column);
+      }
+      if (props.display_mode === 'pie_chart' && props.pie_value_column) {
+        numberColNames.add(props.pie_value_column);
+      }
+
+      if (numberColNames.size) {
         items.value = data.items.map(item => {
-          numberCols.forEach(col => {
-            item[col.value] = item[col.value] !== '' ? item[col.value] * 1 : null;
+          const row = { ...item };
+          numberColNames.forEach(col => {
+            row[col] = row[col] !== '' && row[col] != null ? row[col] * 1 : null;
           });
-          return item;
+          return row;
         });
       } else {
         items.value = data.items;
@@ -333,34 +369,63 @@ async function onRefresh() {
       <v-notice v-else type="danger" center>{{ error }}</v-notice>
     </div>
 
-    <template v-else-if="tableHeaders && items">
-      <v-button v-if="download" @click="exportCSVFile" icon secondary class="export-csv-button">
-        <v-icon name="download-file" />
+    <template v-else-if="items">
+      <v-button
+        v-if="allow_refresh && !isTableMode"
+        @click="onRefresh"
+        icon
+        secondary
+        class="refresh-button"
+        v-tooltip="'Refresh'">
+        <v-icon name="refresh" />
       </v-button>
 
-      <FastTable
-        :headers="tableHeaders"
+      <template v-if="isTableMode && tableHeaders">
+        <v-button v-if="download" @click="exportCSVFile" icon secondary class="export-csv-button">
+          <v-icon name="download-file" />
+        </v-button>
+
+        <FastTable
+          :headers="tableHeaders"
+          :items="items"
+          @click:row="onRowClick"
+          @refresh="onRefresh"
+          v-model:sort="sort.by"
+          v-model:sortDesc="sort.desc"
+          :rowClickable="!!rowFunction"
+          :showRefresh="allow_refresh"
+          fixed-header>
+          <template v-if="actions?.find(a => !a.row)" #item-append="{ item }">
+            <v-button
+              outlined
+              v-for="action in actions.filter(a => !a.row)"
+              v-tooltip="action.label"
+              @click="onActionClick(action, item)"
+              :icon="!action.show_label"
+              x-small>
+              <v-icon :name="action.icon" />
+              <span v-if="action.show_label">{{ action.label }}</span>
+            </v-button>
+          </template>
+        </FastTable>
+      </template>
+
+      <SingleValueDisplay
+        v-else-if="display_mode === 'single_value'"
         :items="items"
-        @click:row="onRowClick"
-        @refresh="onRefresh"
-        v-model:sort="sort.by"
-        v-model:sortDesc="sort.desc"
-        :rowClickable="!!rowFunction"
-        :showRefresh="allow_refresh"
-        fixed-header>
-        <template v-if="actions?.find(a => !a.row)" #item-append="{ item }">
-          <v-button
-            outlined
-            v-for="action in actions.filter(a => !a.row)"
-            v-tooltip="action.label"
-            @click="onActionClick(action, item)"
-            :icon="!action.show_label"
-            x-small>
-            <v-icon :name="action.icon" />
-            <span v-if="action.show_label">{{ action.label }}</span>
-          </v-button>
-        </template>
-      </FastTable>
+        :layout="value_layout"
+        :value-column="value_column"
+        :label-column="value_label_column"
+        :size="value_size"
+        :format="value_format" />
+
+      <PieChartDisplay
+        v-else-if="display_mode === 'pie_chart'"
+        :items="items"
+        :value-column="pie_value_column"
+        :label-column="pie_label_column"
+        :show-legend="pie_show_legend"
+        :show-values="pie_show_values" />
     </template>
   </div>
 </template>
@@ -384,14 +449,16 @@ async function onRefresh() {
   height: 100%;
 }
 
-.export-csv-button {
+.export-csv-button,
+.refresh-button {
   position: absolute;
   right: 0;
   bottom: 0;
   z-index: 2;
   opacity: 0.8;
 }
-.export-csv-button .button {
+.export-csv-button .button,
+.refresh-button .button {
   border-radius: var(--border-radius) 0 0 0 !important;
 }
 </style>
