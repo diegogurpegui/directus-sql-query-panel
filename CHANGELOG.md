@@ -1,4 +1,4 @@
-# Version 1.4.0
+# Version 1.5.0
 
 - Add display modes for query results: table (default), single value, and pie chart
 - Single value mode supports text and numeric values, with single or multiple row layouts (label | value)
