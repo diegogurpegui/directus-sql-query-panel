@@ -1,4 +1,10 @@
-# Version 1.3.1
+# Version 1.4.0
+
+- Add display modes for query results: table (default), single value, and pie chart
+- Single value mode supports text and numeric values, with single or multiple row layouts (label | value)
+- Pie chart mode with configurable value and label columns, optional legend and percentages, and tooltips on slices showing label and value
+
+## Version 1.3.1
 
 - Added backend caching of query results. 
 - Added option to allow end user to bypass cache and fetch new results.
